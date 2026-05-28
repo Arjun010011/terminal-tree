@@ -5,6 +5,8 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <variant>
+#include <vector>
 
 using namespace std;
 namespace fs = filesystem;
@@ -48,6 +50,66 @@ PrintOptions create_print_options(span<char *> arguments) {
   return print_options;
 }
 
+struct File {
+  fs::path path;
+};
+
+struct Dir {
+  fs::path path;
+};
+struct Root {
+  fs::path path;
+};
+using PrintableFileObject = variant<File, Dir, Root>;
+
+class FileObjectPrinter {
+public:
+  void operator()(const File &file) { cout << file.path.filename() << "\n"; }
+  void operator()(const Dir &dir) {
+    cout << dir.path.filename() << "\n";
+    print_children(dir.path);
+  }
+  void operator()(const Root &root) {
+    cout << ".\n";
+    print_children(root.path);
+  }
+
+private:
+  void print_prefix(bool is_last) {
+    for (bool has_mor_siblings : m_stack) {
+      if (has_mor_siblings) {
+        cout << "│   ";
+      } else {
+        cout << "    ";
+      }
+    }
+    cout << (is_last ? "└── " : "├── ");
+  }
+  void print_children(const fs::path &path) {
+    vector<fs::path> children;
+    for (const auto &child : fs::directory_iterator(path)) {
+      children.push_back(child);
+    }
+    for (size_t i{}; i < children.size(); i++) {
+      bool is_last{i + 1 == children.size()};
+      print_prefix(is_last);
+      m_stack.push_back(!is_last);
+      visit(*this, create_printable(children[i]));
+      m_stack.pop_back();
+    }
+  }
+  PrintableFileObject create_printable(const fs::path &path) {
+    if (fs::is_directory(path)) {
+
+      return Dir{path};
+    }
+    return File{path};
+  }
+
+private:
+  vector<bool> m_stack;
+};
+
 int main(int argc, char **argv) {
   auto print_options{create_print_options({argv, static_cast<size_t>(argc)})};
   cout << "----OPTIONS----\n";
@@ -57,5 +119,7 @@ int main(int argc, char **argv) {
                ? to_string(*print_options.max_depth)
                : "infinite")
        << "\n";
+  visit(FileObjectPrinter{},
+        PrintableFileObject{Root(print_options.dir_to_print)});
   return 0;
 }
